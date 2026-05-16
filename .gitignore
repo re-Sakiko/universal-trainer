@@ -1,0 +1,36 @@
+# 模型和数据文件 (太大,不上传)
+models/*
+datasets/*
+outputs/*
+
+# 但保留目录中的说明文件
+!models/README.md
+!datasets/README.md
+!outputs/README.md
+!models/.gitkeep
+!datasets/.gitkeep
+!outputs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db

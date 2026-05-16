@@ -1,0 +1,8 @@
+# 强制 LF 行尾 (跨平台兼容)
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.bat text eol=crlf

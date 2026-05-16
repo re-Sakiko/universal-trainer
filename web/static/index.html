@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Universal Trainer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0f1117;color:#e1e4e8;min-height:100vh}
+.header{background:#161b22;border-bottom:1px solid #30363d;padding:12px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;color:#58a6ff}
+.header .dot{width:8px;height:8px;border-radius:50%;background:#3fb950;display:inline-block;margin-right:6px}
+.header .dot.off{background:#f85149}
+.container{display:grid;grid-template-columns:380px 1fr;height:calc(100vh - 53px);gap:0}
+.panel{background:#161b22;border-right:1px solid #30363d;padding:16px;overflow-y:auto}
+.panel h2{font-size:14px;color:#8b949e;margin-bottom:12px;text-transform:uppercase;letter-spacing:1px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:12px;color:#8b949e;margin-bottom:4px}
+.form-group select,.form-group input{width:100%;padding:8px 10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e1e4e8;font-size:13px}
+.form-group select:focus,.form-group input:focus{outline:none;border-color:#58a6ff}
+.form-row{display:flex;gap:8px}
+.form-row .form-group{flex:1}
+.btn{width:100%;padding:10px;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;transition:.2s}
+.btn-primary{background:#238636;color:#fff}
+.btn-primary:hover{background:#2ea043}
+.btn-primary:disabled{background:#21262d;color:#484f58;cursor:default}
+.btn-danger{background:#da3633;color:#fff}
+.btn-danger:hover{background:#f85149}
+.btn-outline{background:transparent;border:1px solid #30363d;color:#e1e4e8}
+.btn-outline:hover{background:#21262d}
+.btn-sm{padding:6px 12px;font-size:12px;width:auto}
+.main{padding:16px;overflow-y:auto;display:flex;flex-direction:column}
+.log-area{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-family:'Cascadia Code','Consolas',monospace;font-size:12px;overflow-y:auto;white-space:pre-wrap;line-height:1.6;min-height:300px}
+.log-area .info{color:#8b949e}
+.log-area .warn{color:#d29922}
+.log-area .error{color:#f85149}
+.log-area .success{color:#3fb950}
+.progress-bar{height:4px;background:#21262d;border-radius:2px;margin:8px 0;overflow:hidden}
+.progress-bar .fill{height:100%;background:#58a6ff;transition:width .3s;width:0%}
+.status-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px}
+.chat-area{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-top:12px}
+.chat-area h3{font-size:13px;color:#8b949e;margin-bottom:8px}
+.chat-input{display:flex;gap:8px}
+.chat-input input{flex:1;padding:8px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e1e4e8;font-size:13px}
+.chat-answer{background:#161b22;border-radius:6px;padding:12px;margin-top:8px;font-size:13px;max-height:200px;overflow-y:auto}
+.tabs{display:flex;border-bottom:1px solid #30363d;margin-bottom:12px}
+.tab{padding:8px 16px;font-size:13px;color:#8b949e;cursor:pointer;border-bottom:2px solid transparent}
+.tab.active{color:#58a6ff;border-bottom-color:#58a6ff}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;margin-left:4px}
+.badge-green{background:#23863622;color:#3fb950}
+.badge-blue{background:#1f6feb22;color:#58a6ff}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Universal Trainer</h1>
+  <span style="font-size:13px;color:#8b949e">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">就绪</span>
+  </span>
+</div>
+
+<div class="container">
+  <!-- 左侧面板 -->
+  <div class="panel">
+    <h2>📊 数据集</h2>
+    <div class="form-group">
+      <label>数据集路径</label>
+      <input type="text" id="datasetPath" placeholder="datasets/gsm8k.json 或拖拽文件夹">
+    </div>
+    <div class="form-group">
+      <label>数据格式</label>
+      <select id="datasetFormat">
+        <option value="auto">自动检测</option>
+        <option value="sharegpt">ShareGPT / OpenAI</option>
+        <option value="alpaca">Alpaca</option>
+        <option value="jsonl">JSONL</option>
+        <option value="csv">CSV</option>
+        <option value="text">纯文本</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>最大样本数 (留空=全部)</label>
+      <input type="number" id="maxSamples" placeholder="例如: 1000">
+    </div>
+
+    <h2>🧠 模型</h2>
+    <div class="form-group">
+      <label>基座模型路径</label>
+      <input type="text" id="modelPath" value="models/Qwen2-0.5B-Instruct">
+    </div>
+
+    <h2>⚙️ 训练参数</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label>LoRA Rank</label>
+        <input type="number" id="loraR" value="16" min="4" max="128">
+      </div>
+      <div class="form-group">
+        <label>LoRA Alpha</label>
+        <input type="number" id="loraAlpha" value="32" min="8" max="256">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>学习率</label>
+        <input type="text" id="lr" value="0.0002" placeholder="2e-4">
+      </div>
+      <div class="form-group">
+        <label>训练步数</label>
+        <input type="number" id="maxSteps" value="2000" min="10">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Batch Size</label>
+        <input type="number" id="batchSize" value="2" min="1">
+      </div>
+      <div class="form-group">
+        <label>Gradient Accum</label>
+        <input type="number" id="gradAccum" value="4" min="1">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>最大序列长度</label>
+      <input type="number" id="maxSeqLength" value="1024" min="128" max="4096">
+    </div>
+    <div class="form-group">
+      <label>GPU 后端</label>
+      <select id="backend">
+        <option value="auto">自动检测</option>
+        <option value="cuda">CUDA (NVIDIA)</option>
+        <option value="directml">DirectML (AMD/Intel)</option>
+        <option value="mps">MPS (Apple M1-M4)</option>
+        <option value="cpu">CPU</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn btn-primary" onclick="doPrepare()" id="btnPrepare">1. 准备训练</button>
+      <button class="btn btn-outline btn-sm" onclick="doStop()" id="btnStop" style="display:none">停止</button>
+    </div>
+    <button class="btn btn-primary" onclick="doTrain()" id="btnTrain" style="margin-top:8px" disabled>2. 开始训练</button>
+
+    <div class="progress-bar" style="margin-top:12px"><div class="fill" id="progressBar"></div></div>
+  </div>
+
+  <!-- 右侧主区域 -->
+  <div class="main">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('log')">📋 训练日志</div>
+      <div class="tab" onclick="switchTab('chat')">💬 推理测试</div>
+      <div class="tab" onclick="switchTab('help')">❓ 帮助</div>
+    </div>
+
+    <div id="tabLog">
+      <div class="log-area" id="logArea"></div>
+    </div>
+
+    <div id="tabChat" style="display:none">
+      <div class="chat-area">
+        <h3>🧪 训练完成后在这里测试模型</h3>
+        <div class="chat-input">
+          <input type="text" id="chatInput" placeholder="输入问题..." onkeydown="if(event.key==='Enter')doInfer()">
+          <button class="btn btn-primary btn-sm" onclick="doInfer()">发送</button>
+        </div>
+        <div class="chat-answer" id="chatAnswer">等待输入...</div>
+      </div>
+    </div>
+
+    <div id="tabHelp" style="display:none">
+      <div class="log-area" style="white-space:normal;font-family:system-ui">
+<h3>支持的格式</h3>
+<pre style="background:#161b22;padding:12px;border-radius:6px;margin:8px 0">
+<b>ShareGPT / OpenAI:</b>
+[{"messages": [{"role": "user", "content": "..."},
+               {"role": "assistant", "content": "..."}]}]
+
+<b>Alpaca:</b>
+[{"instruction": "...", "input": "...", "output": "..."}]
+
+<b>JSONL:</b>
+{"question": "...", "answer": "..."}
+{"prompt": "...", "response": "..."}
+
+<b>CSV:</b>
+question,answer
+"问题1","答案1"
+</pre>
+<h3>快速开始</h3>
+<ol style="margin:8px 0 0 16px">
+<li>把基座模型放到 <code>models/</code> 目录</li>
+<li>把数据集放到 <code>datasets/</code> 目录</li>
+<li>左侧填入路径 → 准备训练 → 开始训练</li>
+<li>训练完成后切换到推理测试 Tab 测试模型</li>
+</ol>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let logCount = 0;
+let pollTimer = null;
+
+function log(msg, cls='') {
+  const area = document.getElementById('logArea');
+  area.innerHTML += `<span class="${cls}">${msg}</span>\n`;
+  area.scrollTop = area.scrollHeight;
+}
+
+async function api(url, data=null) {
+  const opts = data ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)} : {};
+  const r = await fetch(url, opts);
+  return r.json();
+}
+
+async function doPrepare() {
+  const btn = document.getElementById('btnPrepare');
+  btn.disabled = true;
+  btn.textContent = '准备中...';
+  log('━━━ 准备训练 ━━━', 'info');
+
+  const config = {
+    dataset_path: document.getElementById('datasetPath').value,
+    dataset_format: document.getElementById('datasetFormat').value,
+    max_samples: document.getElementById('maxSamples').value || null,
+    model_path: document.getElementById('modelPath').value,
+    max_steps: parseInt(document.getElementById('maxSteps').value) || 2000,
+    learning_rate: parseFloat(document.getElementById('lr').value) || 0.0002,
+    batch_size: parseInt(document.getElementById('batchSize').value) || 2,
+    grad_accum: parseInt(document.getElementById('gradAccum').value) || 4,
+    max_seq_length: parseInt(document.getElementById('maxSeqLength').value) || 1024,
+    lora_r: parseInt(document.getElementById('loraR').value) || 16,
+    lora_alpha: parseInt(document.getElementById('loraAlpha').value) || 32,
+    output_dir: 'outputs/trained_model',
+    backend: document.getElementById('backend').value,
+  };
+
+  try {
+    // 1. 配置
+    const r1 = await api('/api/config', config);
+    log(`后端: ${r1.backend}, 精度: ${r1.dtype}`, 'success');
+
+    // 2. 准备
+    log('加载模型和数据...', 'info');
+    const r2 = await api('/api/prepare');
+    for (const l of (r2.logs || [])) log(l, 'info');
+
+    document.getElementById('btnTrain').disabled = false;
+    document.getElementById('btnStop').style.display = 'inline-block';
+    btn.textContent = '✓ 准备完成';
+    btn.style.background = '#21262d';
+
+    // 开始轮询日志
+    startLogPolling();
+  } catch(e) {
+    log(`ERROR: ${e.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = '1. 准备训练';
+  }
+}
+
+async function doTrain() {
+  const btn = document.getElementById('btnTrain');
+  btn.disabled = true;
+  btn.textContent = '训练中...';
+  log('━━━ 开始训练 ━━━', 'info');
+
+  try {
+    await api('/api/train');
+    updateStatus(true);
+    startLogPolling();
+  } catch(e) {
+    log(`ERROR: ${e.message}`, 'error');
+  }
+}
+
+async function doStop() {
+  await api('/api/stop');
+  log('训练已停止', 'warn');
+  updateStatus(false);
+}
+
+function startLogPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const r = await api(`/api/logs?after=${logCount}`);
+    for (const l of (r.logs || [])) {
+      let cls = '';
+      if (l.includes('ERROR') || l.includes('error')) cls = 'error';
+      else if (l.includes('success') || l.includes('完成') || l.includes('保存')) cls = 'success';
+      else if (l.includes('warn') || l.includes('停止')) cls = 'warn';
+      else cls = 'info';
+      log(l, cls);
+    }
+    logCount = r.count || logCount;
+
+    // Update progress
+    const latestLogs = r.logs || [];
+    for (const l of latestLogs) {
+      const m = l.match(/Step (\d+)/);
+      if (m) {
+        const step = parseInt(m[1]);
+        const maxSteps = parseInt(document.getElementById('maxSteps').value) || 2000;
+        const pct = Math.min(100, Math.round(step / maxSteps * 100));
+        document.getElementById('progressBar').style.width = pct + '%';
+      }
+    }
+
+    // Check if training finished
+    const status = await api('/api/status');
+    if (!status.training) {
+      updateStatus(false);
+      if (status.prepared) {
+        document.getElementById('btnTrain').disabled = true;
+        document.getElementById('btnTrain').textContent = '训练完成';
+      }
+    }
+  }, 2000);
+}
+
+function updateStatus(training) {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  if (training) {
+    dot.className = 'dot';
+    text.textContent = '训练中...';
+    document.getElementById('btnStop').style.display = 'inline-block';
+  } else {
+    dot.className = 'dot off';
+    text.textContent = '就绪';
+    document.getElementById('btnStop').style.display = 'none';
+    document.getElementById('progressBar').style.width = '0%';
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+}
+
+async function doInfer() {
+  const q = document.getElementById('chatInput').value.trim();
+  if (!q) return;
+  document.getElementById('chatAnswer').textContent = '思考中...';
+  const r = await api('/api/infer', {question: q});
+  document.getElementById('chatAnswer').textContent = r.answer || r.error || '无响应';
+}
+
+function switchTab(t) {
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('[id^="tab"]').forEach(el => el.style.display = 'none');
+  event.target.classList.add('active');
+  document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).style.display = 'block';
+}
+
+// 初始化
+(async () => {
+  const r = await api('/api/status');
+  log('Universal Trainer 已启动', 'success');
+  log(`后端: ${r.backend || 'auto'}`, 'info');
+  log('支持格式: ShareGPT, Alpaca, JSONL, CSV, Text', 'info');
+  log('在左侧配置参数后点击"准备训练"', 'info');
+})();
+</script>
+</body>
+</html>
