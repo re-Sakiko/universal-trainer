@@ -16,6 +16,7 @@ sys.path.insert(0, str(BASE))
 
 from flask import Flask, request, jsonify, send_from_directory
 from core import TrainConfig, TrainingEngine, list_supported_formats, scan_models, scan_datasets, scan_outputs
+from core.validator import validate_all_models, validate_all_datasets, validate_model_dir, validate_dataset_file
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -138,6 +139,33 @@ def api_status():
         "prepared": _engine is not None and _engine.model is not None,
         "backend": _engine.config.backend if _engine else "none",
     })
+
+
+@app.route("/api/validate")
+def api_validate():
+    """校验 models/ 和 datasets/ 格式"""
+    return jsonify({
+        "models": validate_all_models(str(BASE / "models")),
+        "datasets": validate_all_datasets(str(BASE / "datasets")),
+    })
+
+
+@app.route("/api/validate/model/<path:model_name>")
+def api_validate_model(model_name):
+    """校验单个模型"""
+    model_path = BASE / "models" / model_name
+    if not model_path.exists():
+        return jsonify({"error": "模型不存在"}), 404
+    return jsonify(validate_model_dir(str(model_path)))
+
+
+@app.route("/api/validate/dataset/<path:dataset_name>")
+def api_validate_dataset(dataset_name):
+    """校验单个数据集"""
+    dataset_path = BASE / "datasets" / dataset_name
+    if not dataset_path.exists():
+        return jsonify({"error": "数据集不存在"}), 404
+    return jsonify(validate_dataset_file(str(dataset_path)))
 
 
 @app.route("/api/infer", methods=["POST"])

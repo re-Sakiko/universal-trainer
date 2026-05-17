@@ -5,6 +5,7 @@ Universal Trainer — CLI 训练入口
 
 用法:
     python train.py --scan                    # 扫描 models/ + datasets/ 目录
+    python train.py --validate                # 扫描并校验文件格式是否正确
     python train.py --dataset datasets/my_data.json
     python train.py --dataset data.csv --format csv
     python train.py --web                     # 启动 Web GUI
@@ -26,6 +27,7 @@ except Exception:
 from core import (
     TrainConfig, TrainingEngine, load_dataset, list_supported_formats,
     scan_models, scan_datasets, print_scan_report, pick_model, pick_dataset,
+    validate_all_models, validate_all_datasets, print_validation_report,
 )
 
 
@@ -34,6 +36,7 @@ def main():
     parser.add_argument("--web", action="store_true", help="启动 Web GUI")
     parser.add_argument("--port", type=int, default=9999, help="Web 端口 (默认 9999)")
     parser.add_argument("--scan", action="store_true", help="扫描 models/ 和 datasets/ 目录")
+    parser.add_argument("--validate", action="store_true", help="扫描并校验 models/ 和 datasets/ 格式")
 
     # 数据集
     parser.add_argument("--dataset", type=str, help="数据集路径 (跳过扫描)")
@@ -72,6 +75,11 @@ def main():
     # ---- 扫描模式 ----
     if args.scan:
         print_scan_report()
+        return
+
+    # ---- 校验模式 ----
+    if args.validate:
+        print_validation_report()
         return
 
     # ---- 确定模型路径 ----
