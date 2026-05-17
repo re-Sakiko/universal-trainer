@@ -1,7 +1,7 @@
 """训练配置"""
 import os
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Union
 from pathlib import Path
 import torch
 
@@ -37,15 +37,12 @@ class ROCmConfig:
 @dataclass
 class TrainConfig:
     # 模型
-    model_name: str = "Qwen2-0.5B-Instruct"
+    model_name: str = ""
     model_path: str = ""
     lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05
-    target_modules: List[str] = field(default_factory=lambda: [
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj",
-    ])
+    target_modules: Union[List[str], str] = "all-linear"
 
     # 数据
     dataset_path: str = ""
@@ -74,7 +71,7 @@ class TrainConfig:
     dtype: str = "bfloat16"
 
     def __post_init__(self):
-        if not self.model_path:
+        if not self.model_path and self.model_name:
             self.model_path = f"models/{self.model_name}"
 
         # 后端自动配置

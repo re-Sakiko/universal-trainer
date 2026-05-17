@@ -327,33 +327,46 @@ def validate_dataset_file(dataset_path: str) -> dict:
 
 # ── 批量校验 ─────────────────────────────────────────────
 
-def validate_all_models(models_dir: str = "models") -> list:
-    """扫描并校验 models/ 下所有模型（同时支持根目录和子文件夹）"""
+def validate_all_models(models_dir: str = "models", max_depth: int = 3) -> list:
+    """递归扫描并校验 models/ 下所有模型"""
     base = Path(models_dir)
     if not base.exists():
         return []
 
     results = []
+    seen = set()
 
     # 先检查 models/ 本身是否就是模型文件夹
     if (base / "config.json").exists():
         result = validate_model_dir(str(base))
         if result["valid"] or result["files"]:
             results.append(result)
+            seen.add(str(base.resolve()))
 
-    # 再扫描子文件夹
-    for d in sorted(base.iterdir()):
-        if not d.is_dir():
-            continue
-        if d.name.startswith(".") or d.name in (".gitkeep", "README.md"):
-            continue
-        # 避免重复：如果已经将 base 本身加入结果
-        if str(d.resolve()) == str(base.resolve()):
-            continue
-        result = validate_model_dir(str(d))
-        if result["valid"] or result["files"]:
-            results.append(result)
+    def _scan_dir(directory: Path, depth: int = 0):
+        if depth > max_depth:
+            return
+        for entry in sorted(directory.iterdir()):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith(".") or entry.name in (".gitkeep", "README.md"):
+                continue
+            resolved = str(entry.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
 
+            result = validate_model_dir(str(entry))
+            if result["valid"] or result["files"]:
+                try:
+                    rel = entry.relative_to(base)
+                    result["name"] = str(rel).replace("\\", "/")
+                except ValueError:
+                    pass
+                results.append(result)
+            _scan_dir(entry, depth + 1)
+
+    _scan_dir(base)
     return results
 
 

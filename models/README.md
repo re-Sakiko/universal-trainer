@@ -1,12 +1,12 @@
 # 基座模型目录
 
-把 HuggingFace 格式的模型文件夹放到这里。
+把 HuggingFace 格式的模型文件夹放到这里。支持递归扫描（子目录内也可检测）。
 
 ### 示例结构
 
 ```
 models/
-└── Qwen2-0.5B-Instruct/
+└── your-model-name/
     ├── config.json
     ├── model.safetensors
     ├── tokenizer.json
@@ -17,13 +17,15 @@ models/
 
 | 模型 | 大小 | 下载 |
 |------|------|------|
-| Qwen2-0.5B-Instruct | ~1GB | `huggingface-cli download Qwen/Qwen2-0.5B-Instruct` |
+| Gemma-4-4B-it | ~15GB | `huggingface-cli download google/gemma-4-4B-it` |
+| Llama-3.2-3B-Instruct | ~6GB | `huggingface-cli download meta-llama/Llama-3.2-3B-Instruct` |
 | Qwen2.5-0.5B-Instruct | ~1GB | `huggingface-cli download Qwen/Qwen2.5-0.5B-Instruct` |
-| Qwen2-1.5B-Instruct | ~3GB | `huggingface-cli download Qwen/Qwen2-1.5B-Instruct` |
+| Qwen2.5-1.5B-Instruct | ~3GB | `huggingface-cli download Qwen/Qwen2.5-1.5B-Instruct` |
 
-### 自动下载
+### 自动检测
 
 ```bash
-# 程序会自动检测 models/ 目录下的模型
+# 扫描 models/ 目录下所有模型并校验格式
 python train.py --scan
+python train.py --validate
 ```

@@ -4,7 +4,6 @@ datasets>=3.0.0
 peft>=0.12.0
 trl>=0.12.0
 accelerate>=1.0.0
-flask>=3.0.0
 # 可选: CUDA 加速 (NVIDIA GPU)
 # bitsandbytes>=0.45.0
 # 可选: AMD ROCm 加速 (Linux)

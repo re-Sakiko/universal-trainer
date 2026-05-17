@@ -81,7 +81,7 @@ class TrainingEngine:
 
         self._log(f"加载模型: {cfg.model_name}")
 
-        load_kwargs = dict(trust_remote_code=True, torch_dtype=cfg.torch_dtype)
+        load_kwargs = dict(trust_remote_code=True, dtype=cfg.torch_dtype)
 
         # ROCm: 设置 attention 实现
         if cfg.is_rocm and self._rocm_attn != "sdpa":

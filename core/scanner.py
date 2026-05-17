@@ -8,9 +8,9 @@ from .validator import (
 )
 
 
-def scan_models(models_dir: str = "models") -> list:
+def scan_models(models_dir: str = "models", max_depth: int = 3) -> list:
     """
-    扫描 models/ 目录，返回可用模型列表（含校验信息）。
+    递归扫描 models/ 目录，返回可用模型列表（含校验信息）。
 
     返回列表每个元素:
         {
@@ -43,29 +43,40 @@ def scan_models(models_dir: str = "models") -> list:
             })
             seen.add(str(base.resolve()))
 
-    # 再扫描子文件夹
-    for d in sorted(base.iterdir()):
-        if not d.is_dir():
-            continue
-        if d.name.startswith(".") or d.name == ".gitkeep":
-            continue
-        if str(d.resolve()) in seen:
-            continue
+    def _scan_dir(directory: Path, depth: int = 0):
+        if depth > max_depth:
+            return
+        for entry in sorted(directory.iterdir()):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith(".") or entry.name == ".gitkeep":
+                continue
+            resolved = str(entry.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
 
-        v = validate_model_dir(str(d))
-        if v["valid"] or v["files"]:
-            models.append({
-                "name": d.name,
-                "path": str(d),
-                "architecture": v["architecture"],
-                "model_type": v["model_type"],
-                "size": v["total_size"],
-                "valid": v["valid"],
-                "missing": v["missing"],
-                "warnings": v["warnings"],
-                "errors": v["errors"],
-            })
+            v = validate_model_dir(str(entry))
+            if v["valid"] or v["files"]:
+                try:
+                    rel_name = str(entry.relative_to(base)).replace("\\", "/")
+                except ValueError:
+                    rel_name = entry.name
+                models.append({
+                    "name": rel_name,
+                    "path": str(entry),
+                    "architecture": v["architecture"],
+                    "model_type": v["model_type"],
+                    "size": v["total_size"],
+                    "valid": v["valid"],
+                    "missing": v["missing"],
+                    "warnings": v["warnings"],
+                    "errors": v["errors"],
+                })
+            # 无论是否有效模型，继续递归扫描子目录
+            _scan_dir(entry, depth + 1)
 
+    _scan_dir(base)
     return models
 
 
@@ -113,8 +124,24 @@ def scan_datasets(datasets_dir: str = "datasets") -> list:
     return datasets
 
 
-def scan_outputs(outputs_dir: str = "outputs") -> list:
-    """扫描 outputs/ 目录，返回已训练的模型列表"""
+def _format_size(bytes_val: int) -> str:
+    """将字节数格式化为人类可读的字符串"""
+    if bytes_val < 1024:
+        return f"{bytes_val} B"
+    elif bytes_val < 1024 * 1024:
+        return f"{bytes_val / 1024:.1f} KB"
+    elif bytes_val < 1024 * 1024 * 1024:
+        return f"{bytes_val / (1024 * 1024):.1f} MB"
+    else:
+        return f"{bytes_val / (1024 * 1024 * 1024):.1f} GB"
+
+
+def scan_outputs(outputs_dir: str = "outputs", details: bool = False) -> list:
+    """扫描 outputs/ 目录，返回已训练的模型列表。
+
+    当 details=True 时额外返回:
+        base_model, rank, lora_alpha, target_modules, task_type, size, has_tokenizer
+    """
     base = Path(outputs_dir)
     if not base.exists():
         return []
@@ -127,10 +154,38 @@ def scan_outputs(outputs_dir: str = "outputs") -> list:
             continue
         adapter = d / "adapter_config.json"
         if adapter.exists():
-            outputs.append({
+            entry = {
                 "name": d.name,
                 "path": str(d),
-            })
+            }
+            if details:
+                try:
+                    with open(adapter, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                    entry["base_model"] = cfg.get("base_model_name_or_path", "")
+                    entry["rank"] = cfg.get("r", None)
+                    entry["lora_alpha"] = cfg.get("lora_alpha", None)
+                    entry["target_modules"] = cfg.get("target_modules", [])
+                    entry["task_type"] = cfg.get("task_type", "")
+                except Exception:
+                    pass
+
+                # 总大小
+                total_bytes = sum(
+                    f.stat().st_size for f in d.rglob("*") if f.is_file()
+                )
+                entry["size"] = _format_size(total_bytes)
+
+                # 是否有 tokenizer 文件
+                tokenizer_files = [
+                    "tokenizer_config.json", "tokenizer.json",
+                    "special_tokens_map.json",
+                ]
+                entry["has_tokenizer"] = any(
+                    (d / tf).exists() for tf in tokenizer_files
+                )
+
+            outputs.append(entry)
 
     return outputs
 
