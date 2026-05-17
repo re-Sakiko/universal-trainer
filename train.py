@@ -21,8 +21,11 @@ sys.path.insert(0, str(BASE))
 try:
     import torch
     HAS_CUDA = torch.cuda.is_available()
+    from core.config import IS_ROCM
+    HAS_ROCM = IS_ROCM
 except Exception:
     HAS_CUDA = False
+    HAS_ROCM = False
 
 from core import (
     TrainConfig, TrainingEngine, load_dataset, list_supported_formats,
@@ -58,7 +61,7 @@ def main():
 
     # 后端
     parser.add_argument("--backend", type=str, default="auto",
-                        choices=["auto", "cuda", "directml", "mps", "cpu"])
+                        choices=["auto", "cuda", "rocm", "directml", "mps", "cpu"])
 
     # 输出
     parser.add_argument("--output", type=str, default="outputs/trained_model")
@@ -108,6 +111,19 @@ def main():
     print(f"  数据: {dataset_path}")
     print(f"  格式: {args.format}")
     print(f"  后端: {args.backend}")
+    if HAS_ROCM:
+        try:
+            gpu_name = torch.cuda.get_device_name(0)
+            hip_ver = torch.version.hip
+            print(f"  GPU: {gpu_name} (HIP {hip_ver})")
+        except Exception:
+            pass
+    elif HAS_CUDA:
+        try:
+            gpu_name = torch.cuda.get_device_name(0)
+            print(f"  GPU: {gpu_name}")
+        except Exception:
+            pass
     print(f"  步数: {args.max_steps}")
     print(f"  输出: {args.output}")
     print("=" * 50 + "\n")
@@ -119,7 +135,7 @@ def main():
         max_samples=args.max_samples,
         max_steps=args.max_steps,
         learning_rate=args.lr,
-        per_device_batch_size=args.batch_size or (2 if HAS_CUDA else 1),
+        per_device_batch_size=args.batch_size or (2 if (HAS_CUDA or HAS_ROCM) else 1),
         gradient_accumulation_steps=args.grad_accum,
         max_seq_length=args.max_seq_length or 1024,
         lora_r=args.lora_r,

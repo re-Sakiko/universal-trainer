@@ -19,6 +19,20 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
 
+def _detect_rocm() -> bool:
+    if not torch.cuda.is_available():
+        return False
+    try:
+        if hasattr(torch.version, "hip") and torch.version.hip is not None:
+            return True
+        name = torch.cuda.get_device_name(0)
+        if any(x in name for x in ("AMD", "Radeon", "Instinct", "gfx")):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="outputs/trained_model", help="LoRA 模型路径")
@@ -28,11 +42,15 @@ def main():
     parser.add_argument("--no-cuda", action="store_true")
     args = parser.parse_args()
 
-    HAS_CUDA = torch.cuda.is_available() and not args.no_cuda
+    HAS_GPU = torch.cuda.is_available() and not args.no_cuda
+    IS_ROCM = _detect_rocm() if HAS_GPU else False
 
     # 加载
-    print(f"加载模型: {args.model}")
-    if HAS_CUDA:
+    gpu_label = f"ROCm (HIP {torch.version.hip})" if IS_ROCM else "CUDA" if HAS_GPU else None
+    load_label = gpu_label or "CPU"
+    print(f"加载模型: {args.model} [{load_label}]")
+
+    if HAS_GPU:
         from transformers import BitsAndBytesConfig
         bnb = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16,
@@ -53,7 +71,7 @@ def main():
     model.config.use_cache = True
 
     # BF16 fix
-    if HAS_CUDA:
+    if HAS_GPU:
         try:
             base = model.base_model.model if hasattr(model, "base_model") else model
             if hasattr(base, "lm_head"):
@@ -65,10 +83,10 @@ def main():
         msgs = [{"role": "user", "content": q}]
         prompt = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
-        if HAS_CUDA:
+        if HAS_GPU:
             inputs = inputs.to("cuda")
         with torch.no_grad():
-            if HAS_CUDA:
+            if HAS_GPU:
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     outputs = model.generate(**inputs, max_new_tokens=max_tok, do_sample=False, pad_token_id=tokenizer.eos_token_id)
             else:

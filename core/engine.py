@@ -14,7 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 
-from .config import TrainConfig
+from .config import TrainConfig, IS_ROCM
 from .dataset_loader import load_dataset
 
 BASE = Path(__file__).parent.parent
@@ -45,7 +45,7 @@ class TrainingEngine:
 
     def _get_device(self):
         cfg = self.config
-        if cfg.backend == "cuda":
+        if cfg.backend in ("cuda", "rocm"):
             return torch.device("cuda")
         elif cfg.backend == "directml":
             import torch_directml
@@ -57,8 +57,14 @@ class TrainingEngine:
     def prepare(self):
         """加载模型 + 数据集，准备训练"""
         cfg = self.config
-        self._log(f"后端: {cfg.backend.upper()}")
+        backend_label = "ROCm" if cfg.is_rocm else cfg.backend.upper()
+        self._log(f"后端: {backend_label}")
         self._log(f"精度: {cfg.dtype}, 4-bit: {cfg.use_4bit}")
+
+        # ROCm: 检测可用的 attention 实现
+        if cfg.is_rocm:
+            self._rocm_attn = _detect_rocm_attn()
+            self._log(f"ROCm Attention: {self._rocm_attn}")
 
         # ---- 加载数据集 ----
         self._log(f"加载数据集: {cfg.dataset_path}")
@@ -76,6 +82,10 @@ class TrainingEngine:
         self._log(f"加载模型: {cfg.model_name}")
 
         load_kwargs = dict(trust_remote_code=True, torch_dtype=cfg.torch_dtype)
+
+        # ROCm: 设置 attention 实现
+        if cfg.is_rocm and self._rocm_attn != "sdpa":
+            load_kwargs["attn_implementation"] = self._rocm_attn
 
         if cfg.use_4bit:
             from transformers import BitsAndBytesConfig
@@ -104,8 +114,16 @@ class TrainingEngine:
         if cfg.use_4bit:
             self.model = prepare_model_for_kbit_training(self.model)
         self.model.config.use_cache = False
-        if cfg.backend == "cuda":
+        if cfg.backend in ("cuda", "rocm"):
             self.model.gradient_checkpointing_enable()
+
+        # ROCm: 尝试 torch.compile 加速 (Python 3.12+ / PyTorch 2.5+)
+        if cfg.is_rocm and _can_compile():
+            try:
+                self._log("ROCm: 启用 torch.compile...")
+                self.model = torch.compile(self.model, backend="inductor", mode="reduce-overhead")
+            except Exception as e:
+                self._log(f"ROCm: torch.compile 跳过 ({e})")
 
         lora_config = LoraConfig(
             r=cfg.lora_r,
@@ -149,14 +167,14 @@ class TrainingEngine:
             fp16=(cfg.dtype == "float16"),
             bf16=cfg.use_bf16,
             logging_steps=max(1, cfg.max_steps // 20) if cfg.max_steps >= 20 else 1,
-            optim="adamw_8bit" if cfg.backend == "cuda" else "adamw_torch",
+            optim="adamw_8bit" if cfg.backend in ("cuda", "rocm") else "adamw_torch",
             weight_decay=cfg.weight_decay,
             lr_scheduler_type="linear",
             seed=cfg.seed,
             report_to="none",
             save_strategy="no",
             dataloader_num_workers=0,
-            gradient_checkpointing=(cfg.backend == "cuda"),
+            gradient_checkpointing=(cfg.backend in ("cuda", "rocm")),
             max_length=cfg.max_seq_length,
             dataset_num_proc=1,
         )
@@ -205,7 +223,7 @@ class TrainingEngine:
         self.model.config.use_cache = True
 
         # BF16 fix
-        if self.config.backend == "cuda":
+        if self.config.backend in ("cuda", "rocm"):
             try:
                 base = self.model.base_model.model if hasattr(self.model, "base_model") else self.model
                 if hasattr(base, "lm_head"):
@@ -218,11 +236,11 @@ class TrainingEngine:
             messages, tokenize=False, add_generation_prompt=True
         )
         inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True)
-        if self.config.backend == "cuda":
+        if self.config.backend in ("cuda", "rocm"):
             inputs = inputs.to("cuda")
 
         with torch.no_grad():
-            if self.config.backend == "cuda":
+            if self.config.backend in ("cuda", "rocm"):
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     outputs = self.model.generate(
                         **inputs, max_new_tokens=max_tokens, do_sample=False,
@@ -242,3 +260,37 @@ class TrainingEngine:
 
     def get_logs(self) -> list:
         return self._log_lines
+
+
+def _detect_rocm_attn() -> str:
+    """检测 ROCm 可用的最优 attention 实现"""
+    try:
+        # flash_attention_2 在 ROCm 5.7+ / PyTorch 2.5+ 可用
+        import flash_attn
+        _ = flash_attn
+        return "flash_attention_2"
+    except ImportError:
+        pass
+    try:
+        # SDPA 通常是可靠的回退
+        if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+            return "sdpa"
+    except Exception:
+        pass
+    return "eager"
+
+
+def _can_compile() -> bool:
+    """检测 torch.compile 是否可用"""
+    try:
+        major, minor = map(int, torch.__version__.split(".")[:2])
+        if (major, minor) < (2, 5):
+            return False
+        # 快速 smoke test
+        @torch.compile(backend="inductor")
+        def _f(x):
+            return x + 1
+        _f(torch.tensor([1.0]))
+        return True
+    except Exception:
+        return False
