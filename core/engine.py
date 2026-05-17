@@ -54,9 +54,48 @@ class TrainingEngine:
             return torch.device("mps")
         return torch.device("cpu")
 
-    def prepare(self):
+    def _start_stop_listener(self):
+        """启动后台线程监听 Ctrl+F 终止信号"""
+        self._stop_flag = False
+        t = threading.Thread(target=self._keyboard_listener, daemon=True)
+        t.start()
+
+    def _keyboard_listener(self):
+        """跨平台键盘监听：检测 Ctrl+F (ASCII 0x06)"""
+        try:
+            # Windows: 使用 msvcrt
+            import msvcrt
+            while not self._stop_flag:
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch()
+                    if ch == b'\x06':  # Ctrl+F
+                        self._log("收到 Ctrl+F 停止信号")
+                        self._stop_flag = True
+                        break
+                else:
+                    time.sleep(0.1)
+        except ImportError:
+            # Unix: 使用 select + sys.stdin
+            import select, termios, tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                while not self._stop_flag:
+                    r, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if r:
+                        ch = sys.stdin.read(1)
+                        if ch == '\x06':  # Ctrl+F
+                            self._log("收到 Ctrl+F 停止信号")
+                            self._stop_flag = True
+                            break
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    def prepare(self, resume: bool = False):
         """加载模型 + 数据集，准备训练"""
         cfg = self.config
+        resume = resume or cfg.resume
         backend_label = "ROCm" if cfg.is_rocm else cfg.backend.upper()
         self._log(f"后端: {backend_label}")
         self._log(f"精度: {cfg.dtype}, 4-bit: {cfg.use_4bit}")
@@ -110,14 +149,14 @@ class TrainingEngine:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # ---- LoRA ----
+        # ---- LoRA: 新训练 或 继续训练 ----
         if cfg.use_4bit:
             self.model = prepare_model_for_kbit_training(self.model)
         self.model.config.use_cache = False
         if cfg.backend in ("cuda", "rocm"):
             self.model.gradient_checkpointing_enable()
 
-        # ROCm: 尝试 torch.compile 加速 (Python 3.12+ / PyTorch 2.5+)
+        # ROCm: 尝试 torch.compile 加速
         if cfg.is_rocm and _can_compile():
             try:
                 self._log("ROCm: 启用 torch.compile...")
@@ -125,18 +164,32 @@ class TrainingEngine:
             except Exception as e:
                 self._log(f"ROCm: torch.compile 跳过 ({e})")
 
-        lora_config = LoraConfig(
-            r=cfg.lora_r,
-            lora_alpha=cfg.lora_alpha,
-            target_modules=cfg.target_modules,
-            lora_dropout=cfg.lora_dropout,
-            bias="none",
-            task_type="CAUSAL_LM",
-        )
-        self.model = get_peft_model(self.model, lora_config)
-        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        total = sum(p.numel() for p in self.model.parameters())
-        self._log(f"LoRA: {trainable:,} / {total:,} 可训练 ({100*trainable/total:.2f}%)")
+        if resume:
+            from peft import PeftModel
+            adapter_path = Path(cfg.output_dir)
+            if not (adapter_path / "adapter_config.json").exists():
+                raise FileNotFoundError(
+                    f"未找到已有 LoRA 适配器: {cfg.output_dir}\n"
+                    f"请确认路径正确，或去掉 --resume 重新训练"
+                )
+            self._log(f"继续训练: 加载已有 LoRA 适配器 {cfg.output_dir}")
+            self.model = PeftModel.from_pretrained(self.model, str(adapter_path), is_trainable=True)
+            trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            total = sum(p.numel() for p in self.model.parameters())
+            self._log(f"LoRA (继续): {trainable:,} / {total:,} 可训练 ({100*trainable/total:.2f}%)")
+        else:
+            lora_config = LoraConfig(
+                r=cfg.lora_r,
+                lora_alpha=cfg.lora_alpha,
+                target_modules=cfg.target_modules,
+                lora_dropout=cfg.lora_dropout,
+                bias="none",
+                task_type="CAUSAL_LM",
+            )
+            self.model = get_peft_model(self.model, lora_config)
+            trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            total = sum(p.numel() for p in self.model.parameters())
+            self._log(f"LoRA: {trainable:,} / {total:,} 可训练 ({100*trainable/total:.2f}%)")
 
         # ---- 格式化数据集 ----
         self._log("格式化数据集...")
@@ -155,7 +208,6 @@ class TrainingEngine:
     def train(self):
         """开始训练"""
         cfg = self.config
-        self._stop_flag = False
 
         sft_config = SFTConfig(
             output_dir=str(Path(cfg.output_dir).parent / "checkpoints"),
@@ -188,6 +240,10 @@ class TrainingEngine:
 
         self._log(f"开始训练: {cfg.max_steps} 步, batch={cfg.effective_batch_size}")
         self._log(f"配置: lr={cfg.learning_rate}, LoRA r={cfg.lora_r}, seq={cfg.max_seq_length}")
+        self._log("按 Ctrl+F 可随时终止训练并自动保存模型")
+
+        # 启动键盘监听线程
+        self._start_stop_listener()
 
         # 拦截 logging
         original_log = self.trainer.log
@@ -201,7 +257,11 @@ class TrainingEngine:
                 return original_log(logs, start_time)
         self.trainer.log = custom_log
 
-        self.trainer.train()
+        try:
+            self.trainer.train()
+        except KeyboardInterrupt:
+            self._log("训练被 Ctrl+C 中断")
+
         self.save()
 
     def stop(self):

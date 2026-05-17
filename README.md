@@ -9,6 +9,8 @@
 - **多格式**: ShareGPT, Alpaca, JSONL, CSV, Text 自动识别
 - **格式校验**: 自动检测模型/数据集完整性，给出明确的缺失文件提示
 - **LoRA 管理**: 推理时自动扫描 outputs/ 目录，支持交互式选择
+- **手动终止**: 按 Ctrl+F 随时停止训练并自动保存
+- **断点续训**: 支持从已有 LoRA 适配器继续训练
 
 ## 快速开始
 
@@ -57,6 +59,12 @@ python train.py --model models/my-model --dataset datasets/my_data.json
 
 python train.py --model models/my-model --dataset data.csv --format csv
     手动指定数据格式（默认自动检测）
+
+python train.py --resume
+    从 outputs/trained_model 加载已有 LoRA 适配器，继续训练
+
+python train.py --resume --output outputs/my-lora --max_steps 1000
+    从指定路径继续训练，可修改训练步数等参数
 ```
 
 ### 训练参数
@@ -76,6 +84,7 @@ python train.py --model models/my-model --dataset data.csv --format csv
 | `--lora_alpha` | 32 | LoRA Alpha |
 | `--backend` | auto | 后端: auto / cuda / rocm / directml / mps / cpu |
 | `--output` | outputs/trained_model | 输出目录 |
+| `--resume` | false | 从已有 LoRA 适配器继续训练 |
 
 ### infer.py
 
@@ -98,6 +107,44 @@ python infer.py --model outputs/my-lora -q "你的问题"
 python infer.py --model outputs/my-lora
     交互式对话模式
 ```
+
+## 手动终止训练
+
+训练过程中按 **Ctrl+F** 可随时终止，模型会自动保存到 `--output` 指定的目录。
+
+```
+训练开始时会提示:
+  按 Ctrl+F 可随时终止训练并自动保存模型
+
+按 Ctrl+F 后:
+  [14:32:05] 收到 Ctrl+F 停止信号
+  [14:32:06] 模型已保存: outputs/trained_model
+```
+
+> 注意：Ctrl+F 检测在 Windows 上通过 `msvcrt` 实现，在 Linux/macOS 上通过 `termios` 实现，均为非阻塞轮询，不影响训练性能。
+
+## 继续训练 (断点续训)
+
+训练中断后（手动终止或意外退出），可以加载已保存的 LoRA 适配器继续训练：
+
+```bash
+# 基础用法 — 从 outputs/trained_model 继续训练
+python train.py --resume
+
+# 指定路径继续训练
+python train.py --resume --output outputs/my-lora
+
+# 继续训练并增加步数
+python train.py --resume --output outputs/my-lora --max_steps 3000
+
+# 换一个数据集继续训练（模型结构不变，在新数据上微调）
+python train.py --resume --output outputs/my-lora --dataset datasets/new_data.json
+```
+
+`--resume` 的工作方式：
+1. 照常加载基座模型（`--model` 或自动扫描）
+2. 从 `--output` 目录加载已有的 LoRA 适配器权重
+3. 在此基础继续训练，而非随机初始化新的 LoRA
 
 ## 支持的 GPU
 
@@ -193,4 +240,9 @@ python train.py --dataset data.json --lora_r 32 --lr 1e-4 --max_steps 3000
 
 # 交互式推理（自动扫描所有 LoRA）
 python infer.py
+
+# 训练 → 手动终止 → 换数据继续训练
+python train.py --model models/gemma-4-E4B-it --dataset datasets/data_a.json --output outputs/my-lora --max_steps 2000
+# ... 按 Ctrl+F 停止 ...
+python train.py --resume --output outputs/my-lora --dataset datasets/data_b.json --max_steps 1000
 ```

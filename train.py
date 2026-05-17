@@ -46,6 +46,7 @@ def main():
     parser.add_argument("--model", type=str, help="基座模型路径 (跳过扫描)")
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
+    parser.add_argument("--resume", action="store_true", help="从已有 LoRA 继续训练")
 
     # 训练
     parser.add_argument("--max_samples", type=int, default=None)
@@ -54,6 +55,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--grad_accum", type=int, default=4)
     parser.add_argument("--max_seq_length", type=int, default=None)
+
 
     # 后端
     parser.add_argument("--backend", type=str, default="auto",
@@ -131,10 +133,11 @@ def main():
         lora_alpha=args.lora_alpha,
         output_dir=args.output,
         backend=args.backend,
+        resume=args.resume,
     )
 
     engine = TrainingEngine(cfg)
-    engine.prepare()
+    engine.prepare(resume=args.resume)
     engine.train()
 
     # ---- 推理测试 ----

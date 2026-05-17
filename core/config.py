@@ -64,6 +64,7 @@ class TrainConfig:
 
     # 输出
     output_dir: str = "outputs/trained_model"
+    resume: bool = False  # 从已有 LoRA 继续训练
 
     # 内部状态
     use_4bit: bool = True
