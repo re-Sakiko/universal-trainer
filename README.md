@@ -11,6 +11,11 @@
 - **LoRA 管理**: 推理时自动扫描 outputs/ 目录，支持交互式选择
 - **手动终止**: 按 Ctrl+F 随时停止训练并自动保存
 - **断点续训**: 支持从已有 LoRA 适配器继续训练
+- **独立推理引擎**: 解耦训练管线，纯 base model 或 LoRA 推理，模型格式无关
+- **流式逐字输出**: 默认打字机式输出，直观观察生成过程
+- **多轮对话**: 自动管理对话历史，支持系统提示词
+- **批量推理**: 从 JSONL/JSON/CSV 文件批量推理
+- **智能停止**: 自动适配不同模型的停止标记（Gemma / Qwen / LLaMA）
 
 ## 快速开始
 
@@ -34,10 +39,16 @@ python train.py
 # 或直接指定路径
 python train.py --model models/your-model --dataset datasets/your_data.json --max_steps 2000
 
-# 5. 推理
+# 5. 推理（默认流式逐字输出）
 python infer.py                               # 自动扫描 outputs/ 和 models/
 python infer.py --model outputs/trained_model --test
 python infer.py --model outputs/trained_model -q "你的问题"
+python infer.py --model outputs/trained_model --chat         # 多轮对话
+python infer.py --model outputs/trained_model --batch qs.jsonl  # 批量推理
+
+# 或从 train.py 直接进入推理模式
+python train.py --infer-only                                 # 单推理模式
+python train.py --infer-only --model outputs/trained_model --stream
 ```
 
 ## 命令参考
@@ -90,23 +101,54 @@ python train.py --resume --output outputs/my-lora --max_steps 1000
 
 ```
 python infer.py
-    自动扫描 outputs/ 和 models/，交互式选择 LoRA 和基座模型
+    自动扫描 outputs/ 和 models/，交互式选择 → 进入流式交互对话
 
-python infer.py --test
-    使用默认路径进行测试推理
-
-python infer.py --model outputs/my-lora --test
-    测试指定 LoRA 适配器（自动检测基座模型）
-
-python infer.py --model outputs/my-lora --base models/my-base-model
-    手动指定基座模型路径
+python infer.py --scan
+    扫描 models/ 和 outputs/，列出所有可用模型和 LoRA adapter
 
 python infer.py --model outputs/my-lora -q "你的问题"
-    单次问答
+    单次问答（默认流式逐字输出）
 
-python infer.py --model outputs/my-lora
-    交互式对话模式
+python infer.py --model outputs/my-lora --no-stream -q "你的问题"
+    单次问答（关闭流式，一次性输出）
+
+python infer.py --model outputs/my-lora --chat
+    多轮对话模式（支持 clear / history / exit 命令）
+
+python infer.py --model outputs/my-lora --test
+    运行内置测试题
+
+python infer.py --model outputs/my-lora --batch questions.jsonl
+    批量推理：从 JSONL/JSON/CSV/TXT 文件读取问题列表
+
+python infer.py --model outputs/my-lora --system-prompt "你是一个有用的助手"
+    设置系统提示词
+
+python infer.py --base-only --base models/Qwen2-0.5B
+    纯 base model 推理，不加载 LoRA adapter
+
+python infer.py --base models/Qwen2-0.5B --no-4bit --backend cpu
+    CPU 模式推理
 ```
+
+#### 推理参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--model` | 自动扫描 | LoRA adapter 路径 |
+| `--base` | 自动检测 | 基座模型路径 |
+| `--base-only` | false | 纯 base 推理（不加载 LoRA） |
+| `--no-stream` | false | 禁用流式输出 |
+| `--chat` | false | 多轮对话模式 |
+| `--batch` | — | 批量推理文件路径 |
+| `--system-prompt` | — | 系统提示词 |
+| `--max-tokens` | 512 | 最大生成 token 数 |
+| `--temperature` | 0.7 | 采样温度 |
+| `--top-p` | 0.9 | nucleus sampling |
+| `--top-k` | 50 | top-k sampling |
+| `--no-sample` | false | 贪心解码 (do_sample=False) |
+| `--no-4bit` | false | 禁用 4-bit 量化 |
+| `--backend` | auto | 计算后端: auto/cuda/rocm/cpu |
 
 ## 手动终止训练
 
@@ -214,11 +256,12 @@ python train.py --dataset data.json --backend cpu --max_steps 500
 ```
 universal_trainer/
 ├── core/
-│   ├── config.py          # 训练配置 + GPU/ROCm 自动检测
-│   ├── engine.py          # 多后端训练引擎 (CUDA/DirectML/MPS/CPU)
-│   ├── dataset_loader.py  # 多格式数据集加载器
-│   ├── scanner.py         # 目录扫描器 (模型/数据集/LoRA)
-│   └── validator.py       # 格式校验器
+│   │   ├── config.py          # 训练配置 + GPU/ROCm 自动检测
+│   │   ├── engine.py          # 多后端训练引擎 (CUDA/DirectML/MPS/CPU)
+│   │   ├── infer_engine.py    # 独立推理引擎 (流式/多轮/批量/智能停止)
+│   │   ├── dataset_loader.py  # 多格式数据集加载器
+│   │   ├── scanner.py         # 目录扫描器 (模型/数据集/LoRA)
+│   │   └── validator.py       # 格式校验器
 ├── models/                # 基座模型目录 (支持递归扫描)
 ├── datasets/              # 训练数据目录
 ├── outputs/               # 训练输出 + LoRA 适配器目录
@@ -238,9 +281,26 @@ python train.py --dataset data.csv --format csv --max_samples 1000
 # 自定义超参
 python train.py --dataset data.json --lora_r 32 --lr 1e-4 --max_steps 3000
 
-# 交互式推理（自动扫描所有 LoRA）
+# ── 推理模式 ──
+# 交互式推理（默认流式逐字输出）
 python infer.py
 
+# 单推理模式（从 train.py 入口）
+python train.py --infer-only --model outputs/my-lora
+
+# 多轮对话
+python infer.py --model outputs/my-lora --chat
+
+# 批量推理
+python infer.py --model outputs/my-lora --batch questions.jsonl
+
+# 自定义生成参数
+python infer.py --model outputs/my-lora --temperature 0.3 --max-tokens 256 --no-sample
+
+# 纯 base model 推理（无 LoRA）
+python infer.py --base-only --base models/Qwen2-0.5B
+
+# ── 训练 ──
 # 训练 → 手动终止 → 换数据继续训练
 python train.py --model models/gemma-4-E4B-it --dataset datasets/data_a.json --output outputs/my-lora --max_steps 2000
 # ... 按 Ctrl+F 停止 ...

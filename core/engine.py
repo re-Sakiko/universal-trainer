@@ -299,24 +299,43 @@ class TrainingEngine:
         if self.config.backend in ("cuda", "rocm"):
             inputs = inputs.to("cuda")
 
+        # 收集停止 token：eos + eot，优先从 generation_config 获取
+        stop_ids = []
+        if hasattr(self.model, 'generation_config') and self.model.generation_config is not None:
+            gc_eos = getattr(self.model.generation_config, 'eos_token_id', None)
+            if gc_eos is not None:
+                if isinstance(gc_eos, list):
+                    stop_ids.extend(gc_eos)
+                elif isinstance(gc_eos, int):
+                    stop_ids.append(gc_eos)
+        for attr in ("eos_token_id", "eot_token_id"):
+            val = getattr(self.tokenizer, attr, None)
+            if val is not None:
+                if isinstance(val, list):
+                    stop_ids.extend(val)
+                elif isinstance(val, int):
+                    stop_ids.append(val)
+        seen = set()
+        stop_ids = [x for x in stop_ids if not (x in seen or seen.add(x))]
+
         with torch.no_grad():
             if self.config.backend in ("cuda", "rocm"):
                 with torch.autocast("cuda", dtype=torch.bfloat16):
                     outputs = self.model.generate(
                         **inputs, max_new_tokens=max_tokens, do_sample=False,
-                        pad_token_id=self.tokenizer.eos_token_id,
+                        pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                        eos_token_id=stop_ids,
                     )
             else:
                 outputs = self.model.generate(
                     **inputs, max_new_tokens=max_tokens, do_sample=False,
-                    pad_token_id=self.tokenizer.eos_token_id,
+                    pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                    eos_token_id=stop_ids,
                 )
 
-        decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
-        marker = "<|im_start|>assistant\n"
-        if marker in decoded:
-            return decoded.split(marker)[-1].split("<|im_end|>")[0].strip()
-        return decoded.strip()
+        input_len = inputs["input_ids"].shape[1]
+        new_token_ids = outputs[0][input_len:]
+        return self.tokenizer.decode(new_token_ids, skip_special_tokens=True).strip()
 
     def get_logs(self) -> list:
         return self._log_lines
